@@ -98,7 +98,7 @@ site_disable() {
         echo "Error: site not installed"
 	sudo ls ${CADDY_PATH}
     fi
-    site_info
+    site_status
 }
 
 site_status() {
