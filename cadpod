@@ -120,10 +120,9 @@ auto_install() {
     echo "enabling site"
     site_enable
     echo "checking service status"
-    cat ${SYSTEMD_PATH}/${SYSTEMD_FILE}
-    systemctl --user status ${SITE_NAME}
+    service_status
     echo "checking site status"
-    curl https://${SITE_URLS}
+    site_status
 }
 
 auto_remove() {
