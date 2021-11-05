@@ -1,0 +1,153 @@
+#!/bin/bash
+set -e
+
+# Start editing here
+SITE_NAME=hello
+SITE_BASEURL=wanda.f10r.de
+SITE_URLS=${SITE_NAME}.${SITE_BASEURL}
+CONTAINER_IMAGE=docker.io/nginxdemos/hello:latest
+CONTAINER_DATADIR=/var/www/html
+CONTAINER_PORT=80
+HOST_PORT=50200
+
+CADDYFILE_TEMPLATE=$(cat <<-EOM
+${SITE_URLS} {
+    reverse_proxy localhost:${HOST_PORT}
+    encode gzip zstd
+    basicauth / {
+        ${SITE_NAME} JDJhJDE0JFJySnphYng5UUxLYUlpdG1RVmZmS2VCUUE1VnFSTURWT2lCYnhVNXdTbkxCU1JTNS95eUVD
+    }
+    log {
+        output file /var/log/caddy/${SITE_NAME}.log
+    }
+}
+EOM
+)
+# Stop editing
+
+SYSTEMD_PATH=~/.config/systemd/user
+SYSTEMD_FILE=${SITE_NAME}.service
+SYSTEMD_FILEPATH=${SYSTEMD_PATH}/${SYSTEMD_FILE}
+CADDY_PATH=/etc/caddy/sites-enabled
+CADDY_FILE=${SITE_NAME}.site
+CADDY_FILEPATH=${CADDY_PATH}/${CADDY_FILE}
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
+pod_start() {
+    podman run \
+        --name ${SITE_NAME} \
+        --rm --replace \
+        --env-file ${SCRIPT_DIR}/.env \
+        --publish ${HOST_PORT}:${CONTAINER_PORT} \
+        --volume ${SCRIPT_DIR}/data:${CONTAINER_DATADIR} \
+        ${CONTAINER_IMAGE}
+    podman ps | grep ${SITE_NAME}
+}
+
+service_generate() {
+    podman generate systemd \
+        --files --new --name \
+        --restart-policy=always \
+        --container-prefix="" --separator="" \
+        ${SITE_NAME}
+    ls *.service
+}
+
+service_install() {
+    if [ ! -f "${SCRIPT_DIR}/${SYSTEMD_FILE}" ]; then
+        echo "Error: no unit file found. Run 'service generate' to create one."
+        exit 1
+    fi
+    mv "${SCRIPT_DIR}/${SYSTEMD_FILE}" "${SYSTEMD_PATH}/"
+    systemctl --user daemon-reload
+    systemctl --user enable ${SITE_NAME}
+    systemctl --user start ${SITE_NAME}
+    systemctl --user status ${SITE_NAME}
+}
+
+service_remove() {
+    systemctl --user disable ${SITE_NAME}
+    systemctl --user stop ${SITE_NAME}
+    if [ -f "${SYSTEMD_PATH}/${SYSTEMD_FILE}" ]; then
+       if [ ! -f "${SCRIPT_DIR}/${SYSTEMD_FILE}" ]; then
+            mv "${SYSTEMD_PATH}/${SYSTEMD_FILE}" "${SCRIPT_DIR}"
+            systemctl --user daemon-reload
+        else
+            echo "Error: conflicting file in ${SCRIPT_DIR}"
+            exit 1
+        fi
+    else
+        echo "nothing to remove"
+        ls "${SYSTEMD_PATH}"
+    fi
+}
+
+site_generate() {
+    local template="$CADDYFILE_TEMPLATE"
+    eval "echo \"${template}\"" > "${SCRIPT_DIR}/${CADDY_FILE}"
+    echo "writing to file ${SCRIPT_DIR}/${CADDY_FILE}:"
+    cat "${SCRIPT_DIR}/${CADDY_FILE}"
+}
+
+site_enable() {
+    if [ ! -f "${CADDY_PATH}/${CADDY_FILE}" ]; then
+        if [ ! -f "${SCRIPT_DIR}/${CADDY_FILE}" ]; then
+            site_generate
+        fi
+        sudo mv "${SCRIPT_DIR}/${CADDY_FILE}" "${CADDY_DIR}/"
+        sudo systemctl reload caddy
+    fi
+    echo "site enabled: https://${SITE_URLS}"
+}
+
+site_disable() {
+    if [ -f "${CADDY_PATH}/${CADDY_FILE}" ]; then
+        if [ -f "${SCRIPT_DIR}/${CADDY_FILE}" ]; then
+            echo "Error: conflicting file in ${SCRIPT_DIR}"
+            exit 1
+        else
+            sudo mv "${CADDY_PATH}/${CADDY_FILE}" "${SCRIPT_DIR}/"
+            sudo systemctl reload caddy
+        fi
+    fi
+    site_info
+}
+
+site_info() {
+    ls ${CADDY_PATH}
+    curl ${SITE_URLS}
+}
+
+case "$1" in
+pod)
+    if   [ "$2" = "start" ];    then pod_start
+    elif [ "$2" = "stop" ];     then podman kill ${SITE_NAME}
+    elif [ "$2" = "log" ];      then podman logs -f ${SITE_NAME}
+    else podman ps
+    fi
+    ;;
+site)
+    if   [ "$2" = "enable" ];   then site_enable
+    elif [ "$2" = "disable" ];  then site_disable
+    elif [ "$2" = "generate" ]; then site_generate
+    else site_info
+    fi
+    ;;
+service)
+    if   [ "$2" = "generate" ]; then service_generate
+    elif [ "$2" = "install" ];  then service_install
+    elif [ "$2" = "remove" ];   then service_remove
+    elif [ "$2" = "enable" ];   then systemctl --user enable ${SITE_NAME}
+    elif [ "$2" = "disable" ];  then systemctl --user disable ${SITE_NAME}
+    elif [ "$2" = "start" ];    then systemctl --user start ${SITE_NAME}
+    elif [ "$2" = "stop" ];     then systemctl --user stop ${SITE_NAME}
+    elif [ "$2" = "status" ];   then systemctl --user status ${SITE_NAME}
+    else systemctl --user list-units --type=service | grep Podman
+    fi
+    ;;
+*)
+    echo "Error: command not found" >&2
+    exit 1
+    ;;
+esac
+
