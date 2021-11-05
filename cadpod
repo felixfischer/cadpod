@@ -1,29 +1,8 @@
 #!/bin/bash
 set -e
-
-# Start editing here
-SITE_NAME=hello
-SITE_BASEURL=wanda.f10r.de
-SITE_URLS=${SITE_NAME}.${SITE_BASEURL}
-CONTAINER_IMAGE=docker.io/nginxdemos/hello:latest
-CONTAINER_DATADIR=/var/www/html
-CONTAINER_PORT=80
-HOST_PORT=50200
-
-CADDYFILE_TEMPLATE=$(cat <<-EOM
-${SITE_URLS} {
-    reverse_proxy localhost:${HOST_PORT}
-    encode gzip zstd
-    basicauth / {
-        ${SITE_NAME} JDJhJDE0JFJySnphYng5UUxLYUlpdG1RVmZmS2VCUUE1VnFSTURWT2lCYnhVNXdTbkxCU1JTNS95eUVD
-    }
-    log {
-        output file /var/log/caddy/${SITE_NAME}.log
-    }
-}
-EOM
-)
-# Stop editing
+set -a
+. ./site.config
+set +a
 
 SYSTEMD_PATH=~/.config/systemd/user
 SYSTEMD_FILE=${SITE_NAME}.service
@@ -83,6 +62,11 @@ service_remove() {
     fi
 }
 
+service_status() {
+    systemctl --user list-units --type=service | grep ${SITE_NAME}
+    systemctl --user status ${SITE_NAME} | grep Active
+}
+
 site_generate() {
     local template="$CADDYFILE_TEMPLATE"
     eval "echo \"${template}\"" > "${SCRIPT_DIR}/${CADDY_FILE}"
@@ -117,7 +101,7 @@ site_disable() {
     site_info
 }
 
-site_info() {
+site_status() {
     ls ${CADDY_PATH}
     curl ${SITE_URLS}
 }
@@ -163,6 +147,7 @@ site)
     elif [ "$2" = "disable" ];  then site_disable
     elif [ "$2" = "remove" ];   then site_disable
     elif [ "$2" = "generate" ]; then site_generate
+    elif [ "$2" = "status" ];	then site_status
     else
         echo "Error: sub-command unknown"
 	exit 1
@@ -176,7 +161,7 @@ service)
     elif [ "$2" = "disable" ];  then systemctl --user disable ${SITE_NAME}
     elif [ "$2" = "start" ];    then systemctl --user start ${SITE_NAME}
     elif [ "$2" = "stop" ];     then systemctl --user stop ${SITE_NAME}
-    elif [ "$2" = "status" ];   then systemctl --user status ${SITE_NAME}
+    elif [ "$2" = "status" ];   then service_status
     else
         echo "Error: sub-command unknown"
 	exit 1
